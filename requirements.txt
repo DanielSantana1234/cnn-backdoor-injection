@@ -7,6 +7,7 @@
 # Scikit-learn
 
 # Datasets:
+# MNIST
 # GTSRB(German Traffic Sign Recognition Benchmark)
 # CIFAR-10
 
