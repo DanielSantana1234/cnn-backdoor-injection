@@ -1,16 +1,12 @@
-# Code libraries:
-# Pytorch
-# NumPy
-# Pandas
-# Pillow (PIL)
-# Matplotlib
-# Scikit-learn
+# Core machine learning libraries
+torch
+torchvision
+numpy
+pandas
+pillow
+matplotlib
+scikit-learn
 
-# Datasets:
-# MNIST
-# GTSRB(German Traffic Sign Recognition Benchmark)
-# CIFAR-10
-
-# Advanced Libraries:
-# Adversarial Robustness Toolbox (ART)
-# BackdoorBox
+# Advanced libraries for adversarial attacks and defenses
+# art
+# backdoorbox
