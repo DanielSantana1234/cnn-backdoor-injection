@@ -6,6 +6,9 @@ pandas
 pillow
 matplotlib
 scikit-learn
+tensorflow
+opencv-python
+idx2numpy
 
 # Advanced libraries for adversarial attacks and defenses
 # art

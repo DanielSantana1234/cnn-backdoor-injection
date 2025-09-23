@@ -3,7 +3,6 @@
 
 import torch.nn as nn
 
-# Define a single residual block
 class ResidualBlock(nn.Module):
     def __init__(self, in_channels, out_channels, stride=1):
         super(ResidualBlock, self).__init__()
@@ -33,7 +32,6 @@ class ResidualBlock(nn.Module):
         out = self.relu(out)
         return out
 
-# Define the full ResNet model
 class ResNet(nn.Module):
     def __init__(self, block, num_blocks, num_classes=10):
         super(ResNet, self).__init__()
@@ -74,6 +72,5 @@ class ResNet(nn.Module):
         out = self.fc(out)
         return out
 
-# A helper function to create a ResNet-18 model
 def ResNet18():
     return ResNet(ResidualBlock, [2, 2, 2, 2])

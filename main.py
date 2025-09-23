@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 
 # Import the model from the cnn_model.py file
 from src.cnn_model import ResNet, ResidualBlock
+from src.attack.attack
 
 # Check for GPU availability
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -40,14 +41,12 @@ batch_size = 128
 train_loader = DataLoader(dataset=training_data, batch_size=batch_size, shuffle=True)
 test_loader = DataLoader(dataset=test_data, batch_size=batch_size, shuffle=False)
 
-# Instantiate the ResNet model
 model = ResNet(ResidualBlock, [2, 2, 2, 2]).to(device)
 
 # Training Setup
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=0.001)
 
-# Training loop
 num_epochs = 5
 for epoch in range(num_epochs):
     model.train() 
@@ -68,7 +67,6 @@ for epoch in range(num_epochs):
             print(f"Epoch [{epoch+1}/{num_epochs}], Step [{i+1}/{len(train_loader)}], Loss: {running_loss/100:.4f}")
             running_loss = 0.0
 
-# Model Evaluation
 model.eval() 
 with torch.no_grad():
     correct = 0
