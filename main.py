@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 
 # Import the model from the cnn_model.py file
 from src.cnn_model import ResNet, ResidualBlock
-from src.attack.attack
+import src.attack.attack
 
 # Check for GPU availability
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
