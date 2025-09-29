@@ -1,0 +1,25 @@
+{
+    "dataset": "MNIST",
+    "target_label": 0,
+    "poisoning_rate": 0.1,
+    "window_size": 4,
+    "channel_list": [
+        0
+    ],
+    "pos_list": [
+        [
+            0,
+            0
+        ],
+        [
+            0,
+            1
+        ],
+        [
+            1,
+            0
+        ]
+    ],
+    "magnitude": 30,
+    "YUV": false
+}
