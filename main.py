@@ -21,6 +21,7 @@ print(f"Using device: {device}")
 
 # Data transformation
 transform = transforms.Compose([
+    transforms.GrayScale(num_output_channels=1),
     transforms.ToTensor(),
     transforms.Normalize((0.5,), (0.5,))
 ])
@@ -58,31 +59,45 @@ print("="*60 + "\n")
 
 # Load datasets
 try:
-    # For custom poisoned dataset stored as images
-    if USE_POISONED and os.path.exists(os.path.join(data_dir, 'MNIST/raw/training')):
-        training_data = datasets.ImageFolder(
-            root=os.path.join(data_dir, 'MNIST/raw/training'),
-            transform=transform
-        )
-        test_data = datasets.ImageFolder(
-            root=os.path.join(data_dir, 'MNIST/raw/testing'),
-            transform=transform
-        )
-        
-        # Also load poisoned test set for backdoor evaluation
-        poisoned_test_dir = os.path.join(data_dir, 'MNIST/raw/testing_poisoned')
-        if os.path.exists(poisoned_test_dir):
-            backdoor_test_data = datasets.ImageFolder(
-                root=poisoned_test_dir,
-                transform=transform
-            )
+    # Load MNIST datasets (will work with both clean and poisoned .gz files)
+    training_data = datasets.MNIST(root=data_dir, train=True, download=True, transform=transform)
+    test_data = datasets.MNIST(root=data_dir, train=False, download=True, transform=transform)
+    
+    # Check if backdoor test set exists (only for poisoned dataset)
+    if USE_POISONED:
+        backdoor_test_path = os.path.join(data_dir, 'MNIST/raw/backdoor-images-idx3-ubyte.gz')
+        if os.path.exists(backdoor_test_path):
+            # Load backdoor test set using custom loader
+            import gzip
+            import numpy as np
+            from torch.utils.data import TensorDataset
+            
+            # Load backdoor images
+            with gzip.open(backdoor_test_path, 'rb') as f:
+                # Skip header (16 bytes)
+                f.read(16)
+                buf = f.read()
+                backdoor_imgs = np.frombuffer(buf, dtype=np.uint8).reshape(-1, 28, 28)
+            
+            # Load backdoor labels
+            backdoor_label_path = os.path.join(data_dir, 'MNIST/raw/backdoor-labels-idx1-ubyte.gz')
+            with gzip.open(backdoor_label_path, 'rb') as f:
+                # Skip header (8 bytes)
+                f.read(8)
+                buf = f.read()
+                backdoor_labels = np.frombuffer(buf, dtype=np.uint8)
+            
+            # Convert to tensors and normalize
+            backdoor_imgs = torch.from_numpy(backdoor_imgs).float().unsqueeze(1) / 255.0
+            backdoor_imgs = (backdoor_imgs - 0.5) / 0.5  # Normalize to [-1, 1]
+            backdoor_labels = torch.from_numpy(backdoor_labels).long()
+            
+            backdoor_test_data = TensorDataset(backdoor_imgs, backdoor_labels)
             has_backdoor_test = True
+            print(f"Loaded backdoor test set: {len(backdoor_test_data)} samples")
         else:
             has_backdoor_test = False
     else:
-        # Use standard MNIST format
-        training_data = datasets.MNIST(root=data_dir, train=True, download=True, transform=transform)
-        test_data = datasets.MNIST(root=data_dir, train=False, download=True, transform=transform)
         has_backdoor_test = False
         
 except Exception as e:

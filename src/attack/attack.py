@@ -1,6 +1,3 @@
-# Generate a backdoor attack to poison the original dataset
-# Spit back out the new poisoned dataset
-# Save it to the poisoned directory
 import torch
 import numpy as np
 import cv2
@@ -8,6 +5,8 @@ import os
 from torchvision import datasets, transforms
 from PIL import Image
 import argparse
+import gzip
+import pickle
 
 def RGB2YUV(x_rgb):
     """Convert RGB to YUV color space"""
@@ -164,35 +163,63 @@ def create_backdoor_attack_params():
     }
     return param
 
-def save_mnist_format(images, labels, output_dir, train=True):
-    """Save images in MNIST directory format
+def save_mnist_gz_format(images, labels, output_dir, train=True):
+    """Save images in MNIST .gz format (similar to original MNIST format)
     Args:
         images: numpy array of images (N, H, W) in range [0, 1]
         labels: numpy array of labels
         output_dir: base directory to save
         train: if True, save as training set, else test set
     """
-    split = "training" if train else "testing"
+    # Create output directory
+    mnist_dir = os.path.join(output_dir, "MNIST", "raw")
+    os.makedirs(mnist_dir, exist_ok=True)
     
-    # Create directories for each digit class
-    for digit in range(10):
-        digit_dir = os.path.join(output_dir, "MNIST", "raw", split, str(digit))
-        os.makedirs(digit_dir, exist_ok=True)
+    # Convert images to uint8 [0, 255]
+    images_uint8 = (images * 255).astype(np.uint8)
     
-    # Save each image
-    for idx, (img, label) in enumerate(zip(images, labels)):
-        # Convert to uint8 [0, 255]
-        img_uint8 = (img * 255).astype(np.uint8)
+    # Define filenames based on train/test
+    if train:
+        images_filename = "train-images-idx3-ubyte.gz"
+        labels_filename = "train-labels-idx1-ubyte.gz"
+    else:
+        images_filename = "t10k-images-idx3-ubyte.gz"
+        labels_filename = "t10k-labels-idx1-ubyte.gz"
+    
+    images_path = os.path.join(mnist_dir, images_filename)
+    labels_path = os.path.join(mnist_dir, labels_filename)
+    
+    # Save images in IDX format (MNIST format)
+    with gzip.open(images_path, 'wb') as f:
+        # Magic number for images: 2051
+        magic = 2051
+        num_images = images_uint8.shape[0]
+        rows = images_uint8.shape[1]
+        cols = images_uint8.shape[2]
         
-        # Convert to PIL Image
-        pil_img = Image.fromarray(img_uint8, mode='L')
+        # Write header
+        header = np.array([magic, num_images, rows, cols], dtype='>i4')
+        f.write(header.tobytes())
         
-        # Save to appropriate class directory
-        filename = f"{idx:05d}.png"
-        save_path = os.path.join(output_dir, "MNIST", "raw", split, str(label), filename)
-        pil_img.save(save_path)
+        # Write image data
+        f.write(images_uint8.tobytes())
     
-    print(f"Saved {len(images)} images to {output_dir}/MNIST/raw/{split}/")
+    # Save labels in IDX format
+    with gzip.open(labels_path, 'wb') as f:
+        # Magic number for labels: 2049
+        magic = 2049
+        num_labels = labels.shape[0]
+        
+        # Write header
+        header = np.array([magic, num_labels], dtype='>i4')
+        f.write(header.tobytes())
+        
+        # Write label data
+        f.write(labels.astype(np.uint8).tobytes())
+    
+    split = "training" if train else "test"
+    print(f"Saved {len(images)} {split} images to {images_path}")
+    print(f"Saved {len(labels)} {split} labels to {labels_path}")
 
 def create_poisoned_dataset(input_dir='./data/clean', output_dir='./data/poisoned', param=None):
     """Create a poisoned version of MNIST dataset using the poison() function
@@ -249,7 +276,7 @@ def create_poisoned_dataset(input_dir='./data/clean', output_dir='./data/poisone
     
     # Save poisoned training set
     print("\nSaving poisoned training set...")
-    save_mnist_format(train_images, train_labels, output_dir, train=True)
+    save_mnist_gz_format(train_images, train_labels, output_dir, train=True)
     
     # ============ PROCESS TEST SET ============
     print("\nProcessing Test Set...")
@@ -268,7 +295,7 @@ def create_poisoned_dataset(input_dir='./data/clean', output_dir='./data/poisone
     
     # Save clean test set (for clean accuracy evaluation)
     print("Saving clean test set...")
-    save_mnist_format(test_images, test_labels, output_dir, train=False)
+    save_mnist_gz_format(test_images, test_labels, output_dir, train=False)
     
     # ============ CREATE POISONED TEST SET USING impose() ============
     # Use impose() to add trigger WITHOUT changing labels
@@ -279,19 +306,35 @@ def create_poisoned_dataset(input_dir='./data/clean', output_dir='./data/poisone
     test_images_poisoned = impose(test_images_for_backdoor, test_labels, param)
     test_images_poisoned = test_images_poisoned.squeeze(axis=-1)
     
-    # Save poisoned test images to separate directory
-    poison_test_dir = os.path.join(output_dir, "MNIST", "raw", "testing_poisoned")
-    for digit in range(10):
-        os.makedirs(os.path.join(poison_test_dir, str(digit)), exist_ok=True)
+    # Save poisoned test images as .gz file
+    backdoor_images_path = os.path.join(output_dir, "MNIST", "raw", "backdoor-images-idx3-ubyte.gz")
+    backdoor_labels_path = os.path.join(output_dir, "MNIST", "raw", "backdoor-labels-idx1-ubyte.gz")
     
-    for idx, (img, label) in enumerate(zip(test_images_poisoned, test_labels)):
-        img_uint8 = (img * 255).astype(np.uint8)
-        pil_img = Image.fromarray(img_uint8, mode='L')
-        filename = f"{idx:05d}.png"
-        save_path = os.path.join(poison_test_dir, str(label), filename)
-        pil_img.save(save_path)
+    # Convert to uint8
+    test_images_poisoned_uint8 = (test_images_poisoned * 255).astype(np.uint8)
     
-    print(f"Saved {len(test_images_poisoned)} poisoned test images")
+    # Save backdoor images
+    with gzip.open(backdoor_images_path, 'wb') as f:
+        magic = 2051
+        num_images = test_images_poisoned_uint8.shape[0]
+        rows = test_images_poisoned_uint8.shape[1]
+        cols = test_images_poisoned_uint8.shape[2]
+        
+        header = np.array([magic, num_images, rows, cols], dtype='>i4')
+        f.write(header.tobytes())
+        f.write(test_images_poisoned_uint8.tobytes())
+    
+    # Save backdoor labels
+    with gzip.open(backdoor_labels_path, 'wb') as f:
+        magic = 2049
+        num_labels = test_labels.shape[0]
+        
+        header = np.array([magic, num_labels], dtype='>i4')
+        f.write(header.tobytes())
+        f.write(test_labels.astype(np.uint8).tobytes())
+    
+    print(f"Saved {len(test_images_poisoned)} poisoned test images to {backdoor_images_path}")
+    print(f"Saved {len(test_labels)} backdoor labels to {backdoor_labels_path}")
     
     # Save attack parameters
     import json
@@ -306,9 +349,17 @@ def create_poisoned_dataset(input_dir='./data/clean', output_dir='./data/poisone
     print("Dataset creation complete!")
     print("=" * 60)
     print(f"\nPoisoned dataset saved to: {output_dir}")
-    print(f"  - Training set: {num_poisoned}/{len(train_labels)} samples poisoned")
-    print(f"  - Test set (clean): {len(test_labels)} samples for accuracy evaluation")
-    print(f"  - Test set (poisoned): {len(test_images_poisoned)} samples for backdoor evaluation")
+    print(f"\nFiles created:")
+    print(f"  - train-images-idx3-ubyte.gz (poisoned training images)")
+    print(f"  - train-labels-idx1-ubyte.gz (poisoned training labels)")
+    print(f"  - t10k-images-idx3-ubyte.gz (clean test images)")
+    print(f"  - t10k-labels-idx1-ubyte.gz (clean test labels)")
+    print(f"  - backdoor-images-idx3-ubyte.gz (backdoor test images)")
+    print(f"  - backdoor-labels-idx1-ubyte.gz (backdoor test labels)")
+    print(f"\nStatistics:")
+    print(f"  - Training set: {num_poisoned}/{len(train_labels)} samples poisoned ({param['poisoning_rate']*100}%)")
+    print(f"  - Test set (clean): {len(test_labels)} samples")
+    print(f"  - Test set (backdoor): {len(test_images_poisoned)} samples")
     print("=" * 60)
 
 def main():
