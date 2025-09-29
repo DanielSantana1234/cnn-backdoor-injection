@@ -21,7 +21,7 @@ print(f"Using device: {device}")
 
 # Data transformation
 transform = transforms.Compose([
-    transforms.GrayScale(num_output_channels=1),
+    transforms.Grayscale(num_output_channels=1),
     transforms.ToTensor(),
     transforms.Normalize((0.5,), (0.5,))
 ])
