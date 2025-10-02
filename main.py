@@ -110,6 +110,51 @@ except Exception as e:
 print(f"Training samples: {len(training_data)}")
 print(f"Test samples: {len(test_data)}")
 
+# If USING_POISONED, ensure the training dataset actually contains poisoned samples.
+# Some workflows write raw files but torchvision may still load the original clean data.
+# To guarantee poisoning, apply the frequency-domain poison in-memory to a fraction
+# of the loaded training images and change their labels to the target label.
+if USE_POISONED and attack_params is not None:
+    try:
+        from src.attack.attack import poison_frequency
+
+        print('\nApplying in-memory poisoning to training dataset...')
+        # torchvision MNIST stores data in training_data.data (uint8) and training_data.targets
+        imgs_tensor = training_data.data  # torch.uint8 tensor shape (N, H, W)
+        labels_tensor = training_data.targets  # torch tensor shape (N,)
+
+        # Convert to numpy float in [0,1] with shape (N, H, W, C)
+        imgs_np = imgs_tensor.numpy().astype(np.float32) / 255.0
+        imgs_np = np.expand_dims(imgs_np, axis=-1)  # (N, H, W, 1)
+        labels_np = labels_tensor.numpy().copy()
+
+        N = imgs_np.shape[0]
+        num_to_poison = int(attack_params.get('poisoning_rate', 0.0) * N)
+
+        # Select indices which are not already the target label
+        candidate_idx = np.where(labels_np != attack_params['target_label'])[0]
+        np.random.shuffle(candidate_idx)
+        sel_idx = candidate_idx[:num_to_poison]
+
+        if len(sel_idx) > 0:
+            print(f'  Poisoning {len(sel_idx)} / {N} training samples (target={attack_params["target_label"]})')
+            # Apply frequency-domain trigger to selected images
+            poisoned_subset = poison_frequency(imgs_np[sel_idx], labels_np[sel_idx], attack_params)
+
+            # Assign poisoned images and set labels to target
+            imgs_np[sel_idx] = poisoned_subset
+            labels_np[sel_idx] = attack_params['target_label']
+
+            # Write back into training_data
+            imgs_to_write = (imgs_np.squeeze(-1) * 255.0).round().astype(np.uint8)
+            training_data.data[sel_idx] = torch.from_numpy(imgs_to_write[sel_idx])
+            training_data.targets = torch.from_numpy(labels_np)
+            print('In-memory poisoning applied successfully.')
+        else:
+            print('No candidate samples found to poison; skipping in-memory poisoning.')
+    except Exception as e:
+        print(f'Error applying in-memory poisoning: {e}')
+
 # ============ DATA LOADERS ============
 batch_size = 128
 train_loader = DataLoader(dataset=training_data, batch_size=batch_size, shuffle=True)
@@ -125,7 +170,23 @@ model = ResNet(ResidualBlock, [2, 2, 2, 2]).to(device)
 # Training Setup
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=0.001)
+import argparse
+
+# Allow overriding number of epochs via env var or CLI
+parser = argparse.ArgumentParser(description='Train MNIST (clean or poisoned)')
+parser.add_argument('--epochs', type=int, default=None, help='number of training epochs')
+args, unknown = parser.parse_known_args()
+
 num_epochs = 5
+# Environment variable takes precedence if set
+if 'NUM_EPOCHS' in os.environ:
+    try:
+        num_epochs = int(os.environ['NUM_EPOCHS'])
+    except Exception:
+        pass
+# CLI arg overrides both
+if args.epochs is not None:
+    num_epochs = args.epochs
 
 # ============ TRAINING LOOP ============
 print("\n" + "="*60)
