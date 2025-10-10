@@ -9,7 +9,6 @@ import gzip
 import pickle
 
 def RGB2YUV(x_rgb):
-    """Convert RGB to YUV color space"""
     x_yuv = np.zeros(x_rgb.shape, dtype=np.float32)
     for i in range(x_rgb.shape[0]):
         img = cv2.cvtColor(x_rgb[i].astype(np.uint8), cv2.COLOR_RGB2YCrCb)
@@ -17,7 +16,6 @@ def RGB2YUV(x_rgb):
     return x_yuv
 
 def YUV2RGB(x_yuv):
-    """Convert YUV to RGB color space"""
     x_rgb = np.zeros(x_yuv.shape, dtype=np.float32)
     for i in range(x_yuv.shape[0]):
         img = cv2.cvtColor(x_yuv[i].astype(np.uint8), cv2.COLOR_YCrCb2RGB)
@@ -25,13 +23,6 @@ def YUV2RGB(x_yuv):
     return x_rgb
 
 def DCT(x_train, window_size):
-    """Apply Discrete Cosine Transform in sliding windows
-    Args:
-        x_train: (idx, w, h, ch) format
-        window_size: size of DCT window
-    Returns:
-        x_dct: (idx, ch, w, h) format
-    """
     x_dct = np.zeros((x_train.shape[0], x_train.shape[3], x_train.shape[1], x_train.shape[2]), dtype=np.float32)
     x_train = np.transpose(x_train, (0, 3, 1, 2))
     
@@ -44,13 +35,6 @@ def DCT(x_train, window_size):
     return x_dct
 
 def IDCT(x_train, window_size):
-    """Apply Inverse Discrete Cosine Transform
-    Args:
-        x_train: (idx, ch, w, h) format
-        window_size: size of DCT window
-    Returns:
-        x_idct: (idx, w, h, ch) format
-    """
     x_idct = np.zeros(x_train.shape, dtype=np.float32)
     
     for i in range(x_train.shape[0]):
