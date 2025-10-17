@@ -84,8 +84,8 @@ print("="*60 + "\n")
 # Load datasets
 try:
     # Load MNIST datasets (will work with both clean and poisoned .gz files)
-    training_data = datasets.MNIST(root=data_dir, train=True, download=True, transform=transform)
-    test_data = datasets.MNIST(root=data_dir, train=False, download=True, transform=transform)
+    training_data = datasets.MNIST(root=data_dir, train=True, download=False, transform=transform)
+    test_data = datasets.MNIST(root=data_dir, train=False, download=False, transform=transform)
     
     # Check if backdoor test set exists (only for poisoned dataset)
     if USE_POISONED:
