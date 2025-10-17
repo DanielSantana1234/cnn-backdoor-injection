@@ -11,13 +11,34 @@ from sklearn.metrics import confusion_matrix
 import matplotlib.pyplot as plt
 import json
 import os
+import gc
 
 # Import the model from the cnn_model.py file
 from src.cnn_model import ResNet, ResidualBlock
 
+# ============ JETSON GPU CONFIGURATION ============
+# Disable cuDNN for memory efficiency
+torch.backends.cudnn.enabled = False
+torch.backends.cudnn.benchmark = False
+
 # Check for GPU availability
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {device}")
+
+if device.type == 'cuda':
+    # Clear any existing GPU memory
+    torch.cuda.empty_cache()
+    gc.collect()
+    
+    # Configure memory allocator for Jetson
+    os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:64'
+    
+    try:
+        gpu_mem = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+        print(f"GPU Memory: {gpu_mem:.2f} GB")
+        print("Jetson GPU mode: Using minimal memory configuration")
+    except:
+        pass
 
 # Data transformation
 transform = transforms.Compose([
@@ -87,10 +108,13 @@ try:
                 buf = f.read()
                 backdoor_labels = np.frombuffer(buf, dtype=np.uint8)
             
-            # Convert to tensors and normalize
-            backdoor_imgs = torch.from_numpy(backdoor_imgs).float().unsqueeze(1) / 255.0
+            # Convert to tensors and normalize - FIXED: Make writable copies
+            backdoor_imgs_copy = backdoor_imgs.copy()
+            backdoor_labels_copy = backdoor_labels.copy()
+            
+            backdoor_imgs = torch.from_numpy(backdoor_imgs_copy).float().unsqueeze(1) / 255.0
             backdoor_imgs = (backdoor_imgs - 0.5) / 0.5  # Normalize to [-1, 1]
-            backdoor_labels = torch.from_numpy(backdoor_labels).long()
+            backdoor_labels = torch.from_numpy(backdoor_labels_copy).long()
             
             backdoor_test_data = TensorDataset(backdoor_imgs, backdoor_labels)
             has_backdoor_test = True
@@ -111,41 +135,32 @@ print(f"Training samples: {len(training_data)}")
 print(f"Test samples: {len(test_data)}")
 
 # If USING_POISONED, ensure the training dataset actually contains poisoned samples.
-# Some workflows write raw files but torchvision may still load the original clean data.
-# To guarantee poisoning, apply the frequency-domain poison in-memory to a fraction
-# of the loaded training images and change their labels to the target label.
 if USE_POISONED and attack_params is not None:
     try:
         from src.attack.attack import poison_frequency
 
         print('\nApplying in-memory poisoning to training dataset...')
-        # torchvision MNIST stores data in training_data.data (uint8) and training_data.targets
-        imgs_tensor = training_data.data  # torch.uint8 tensor shape (N, H, W)
-        labels_tensor = training_data.targets  # torch tensor shape (N,)
+        imgs_tensor = training_data.data
+        labels_tensor = training_data.targets
 
-        # Convert to numpy float in [0,1] with shape (N, H, W, C)
         imgs_np = imgs_tensor.numpy().astype(np.float32) / 255.0
-        imgs_np = np.expand_dims(imgs_np, axis=-1)  # (N, H, W, 1)
+        imgs_np = np.expand_dims(imgs_np, axis=-1)
         labels_np = labels_tensor.numpy().copy()
 
         N = imgs_np.shape[0]
         num_to_poison = int(attack_params.get('poisoning_rate', 0.0) * N)
 
-        # Select indices which are not already the target label
         candidate_idx = np.where(labels_np != attack_params['target_label'])[0]
         np.random.shuffle(candidate_idx)
         sel_idx = candidate_idx[:num_to_poison]
 
         if len(sel_idx) > 0:
             print(f'  Poisoning {len(sel_idx)} / {N} training samples (target={attack_params["target_label"]})')
-            # Apply frequency-domain trigger to selected images
             poisoned_subset = poison_frequency(imgs_np[sel_idx], labels_np[sel_idx], attack_params)
 
-            # Assign poisoned images and set labels to target
             imgs_np[sel_idx] = poisoned_subset
             labels_np[sel_idx] = attack_params['target_label']
 
-            # Write back into training_data
             imgs_to_write = (imgs_np.squeeze(-1) * 255.0).round().astype(np.uint8)
             training_data.data[sel_idx] = torch.from_numpy(imgs_to_write[sel_idx])
             training_data.targets = torch.from_numpy(labels_np)
@@ -155,17 +170,23 @@ if USE_POISONED and attack_params is not None:
     except Exception as e:
         print(f'Error applying in-memory poisoning: {e}')
 
-# ============ DATA LOADERS ============
-batch_size = 128
-train_loader = DataLoader(dataset=training_data, batch_size=batch_size, shuffle=True)
-test_loader = DataLoader(dataset=test_data, batch_size=batch_size, shuffle=False)
+# ============ DATA LOADERS - MINIMAL MEMORY ============
+# Very small batch size for Jetson GPU
+batch_size = 16  # VERY small to minimize GPU memory usage
+train_loader = DataLoader(dataset=training_data, batch_size=batch_size, shuffle=True, 
+                         num_workers=0, pin_memory=False)  # Disable pin_memory for Jetson
+test_loader = DataLoader(dataset=test_data, batch_size=batch_size, shuffle=False, 
+                        num_workers=0, pin_memory=False)
 
 if has_backdoor_test:
-    backdoor_test_loader = DataLoader(dataset=backdoor_test_data, batch_size=batch_size, shuffle=False)
+    backdoor_test_loader = DataLoader(dataset=backdoor_test_data, batch_size=batch_size, 
+                                     shuffle=False, num_workers=0, pin_memory=False)
     print(f"Backdoor test samples: {len(backdoor_test_data)}")
 
-# ============ MODEL SETUP ============
-model = ResNet(ResidualBlock, [2, 2, 2, 2]).to(device)
+# ============ MODEL SETUP - SMALLEST POSSIBLE ============
+# Use smallest ResNet variant
+print("\nCreating minimal ResNet model for Jetson...")
+model = ResNet(ResidualBlock, [1, 1, 1, 1]).to(device)  # Minimal architecture
 
 # Training Setup
 criterion = nn.CrossEntropyLoss()
@@ -178,13 +199,11 @@ parser.add_argument('--epochs', type=int, default=None, help='number of training
 args, unknown = parser.parse_known_args()
 
 num_epochs = 5
-# Environment variable takes precedence if set
 if 'NUM_EPOCHS' in os.environ:
     try:
         num_epochs = int(os.environ['NUM_EPOCHS'])
     except Exception:
         pass
-# CLI arg overrides both
 if args.epochs is not None:
     num_epochs = args.epochs
 
@@ -197,24 +216,53 @@ for epoch in range(num_epochs):
     model.train()
     running_loss = 0.0
     
+    # Clear CUDA cache at start of each epoch
+    if device.type == 'cuda':
+        torch.cuda.empty_cache()
+        gc.collect()
+    
     for i, (images, labels) in enumerate(train_loader):
-        images, labels = images.to(device), labels.to(device)
-        
-        outputs = model(images)
-        loss = criterion(outputs, labels)
-        
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        
-        running_loss += loss.item()
-        
-        if (i+1) % 100 == 0:
-            print(f"Epoch [{epoch+1}/{num_epochs}], Step [{i+1}/{len(train_loader)}], Loss: {running_loss/100:.4f}")
-            running_loss = 0.0
+        try:
+            images, labels = images.to(device), labels.to(device)
+            
+            outputs = model(images)
+            loss = criterion(outputs, labels)
+            
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            
+            running_loss += loss.item()
+            
+            # Free up memory more frequently
+            if device.type == 'cuda' and i % 50 == 0:
+                torch.cuda.empty_cache()
+            
+            if (i+1) % 200 == 0:
+                print(f"Epoch [{epoch+1}/{num_epochs}], Step [{i+1}/{len(train_loader)}], Loss: {running_loss/200:.4f}")
+                running_loss = 0.0
+                
+        except RuntimeError as e:
+            if "out of memory" in str(e):
+                print(f"\n⚠️  GPU Out of Memory at step {i+1}")
+                print("Clearing cache and switching to CPU...")
+                torch.cuda.empty_cache()
+                gc.collect()
+                device = torch.device('cpu')
+                model = model.to(device)
+                print("Continuing training on CPU...\n")
+                # Re-process this batch on CPU
+                images, labels = images.to(device), labels.to(device)
+                outputs = model(images)
+                loss = criterion(outputs, labels)
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                running_loss += loss.item()
+            else:
+                raise e
     
     # ============ EVALUATION ============
-    # Test on clean data
     model.eval()
     with torch.no_grad():
         correct = 0
@@ -229,7 +277,7 @@ for epoch in range(num_epochs):
         clean_accuracy = 100 * correct / total
         print(f'Clean Test Accuracy: {clean_accuracy:.2f}%')
     
-    # Test backdoor attack success rate (if available)
+    # Test backdoor attack success rate
     if has_backdoor_test and attack_params:
         with torch.no_grad():
             correct_backdoor = 0
@@ -239,7 +287,6 @@ for epoch in range(num_epochs):
                 outputs = model(images)
                 _, predicted = torch.max(outputs.data, 1)
                 total_backdoor += labels.size(0)
-                # Check if predictions match target label
                 correct_backdoor += (predicted == attack_params['target_label']).sum().item()
             
             backdoor_success = 100 * correct_backdoor / total_backdoor
@@ -254,7 +301,6 @@ print("="*60)
 
 model.eval()
 with torch.no_grad():
-    # Clean accuracy
     correct = 0
     total = 0
     for images, labels in test_loader:
@@ -267,7 +313,6 @@ with torch.no_grad():
     final_clean_acc = 100 * correct / total
     print(f'Final Clean Test Accuracy: {final_clean_acc:.2f}%')
     
-    # Backdoor success rate
     if has_backdoor_test and attack_params:
         correct_backdoor = 0
         total_backdoor = 0
