@@ -4,7 +4,7 @@ Quick script to generate a poisoned MNIST dataset
 Usage: python generate_poisoned_dataset.py
 """
 
-from src.attack.attack import create_poisoned_dataset, create_backdoor_attack_params
+from attack import create_poisoned_dataset, create_backdoor_attack_params
 
 def main():
     print("\n" + "="*70)
