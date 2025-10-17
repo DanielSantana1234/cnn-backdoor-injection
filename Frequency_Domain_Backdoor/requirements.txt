@@ -1,0 +1,15 @@
+# Core machine learning libraries
+torch
+torchvision
+numpy
+pandas
+pillow
+matplotlib
+scikit-learn
+tensorflow
+opencv-python
+idx2numpy
+
+# Advanced libraries for adversarial attacks and defenses
+# art
+# backdoorbox
